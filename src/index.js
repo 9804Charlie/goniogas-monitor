@@ -1,6 +1,7 @@
 const PRODUCT_ID = 108;
 const STORE_API_URL = `https://goniogas.com/wp-json/wc/store/v1/products/${PRODUCT_ID}`;
 const STOCK_KV_KEY = "goniogas_108_stock_state";
+const CRON_HEALTH_KV_KEY = "goniogas_cron_health";
 const SUB_PREFIX = "sub:";
 const STATE_PREFIX = "state:";
 const DEFAULT_QUANTITY = 2;
@@ -143,6 +144,34 @@ async function runCheck(env) {
 
   await env.STOCK_KV.put(STOCK_KV_KEY, newState);
   return { ...status, previousState: prevState, newState, notified, checkedAt: new Date().toISOString() };
+}
+
+async function notifyAdmin(env, text) {
+  try {
+    await sendMessage(env, env.TELEGRAM_CHAT_ID, text);
+  } catch (err) {
+    console.error("No se pudo avisar al administrador:", err);
+  }
+}
+
+// Latido: solo avisa al administrador (nunca a los demas suscriptores) cuando
+// el chequeo programado empieza a fallar, y una sola vez mientras dure el
+// fallo. Avisa tambien cuando se recupera, para no dejar la duda de si sigue roto.
+async function runScheduledCheck(env) {
+  const wasFailing = (await env.STOCK_KV.get(CRON_HEALTH_KV_KEY)) === "failing";
+  try {
+    await runCheck(env);
+    if (wasFailing) {
+      await env.STOCK_KV.put(CRON_HEALTH_KV_KEY, "ok");
+      await notifyAdmin(env, "✅ goniogas-monitor: el chequeo de stock programado volvió a funcionar con normalidad.");
+    }
+  } catch (err) {
+    console.error("Error en chequeo programado:", err);
+    if (!wasFailing) {
+      await env.STOCK_KV.put(CRON_HEALTH_KV_KEY, "failing");
+      await notifyAdmin(env, `⚠️ goniogas-monitor: el chequeo de stock programado está fallando.\n\nError: ${err.message}`);
+    }
+  }
 }
 
 async function handleStart(env, chatId, from) {
@@ -290,7 +319,7 @@ function checkAuth(request, url, env) {
 
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runCheck(env).catch((err) => console.error("Error en chequeo programado:", err)));
+    ctx.waitUntil(runScheduledCheck(env));
   },
 
   async fetch(request, env) {

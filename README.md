@@ -14,9 +14,14 @@ la cuenta por una compra automática.
 
 ## Cómo funciona
 
-- Un **Cron Trigger** (`*/5 * * * *`, cada 5 minutos) llama a la API pública
+- Un **Cron Trigger** (`*/2 * * * *`, cada 2 minutos) llama a la API pública
   de WooCommerce: `GET /wp-json/wc/store/v1/products/108`, que devuelve JSON
   con `is_in_stock`. No hace falta raspar HTML ni autenticarse.
+- **Latido**: si el chequeo programado falla (la API no responde, error de
+  red, etc.), se avisa **solo al administrador** por Telegram — nunca a los
+  demás suscriptores. Solo una vez mientras dure el fallo (no en cada
+  ejecución), y con un aviso de recuperación cuando vuelve a funcionar. El
+  estado se guarda en KV (`goniogas_cron_health`).
 - El último estado conocido (`in_stock` / `out_of_stock`) se guarda en **KV**.
   Solo se notifica en la transición de "sin stock" a "con stock", para no
   repetir el aviso en cada chequeo mientras dure la existencia.
