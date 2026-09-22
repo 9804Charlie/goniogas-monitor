@@ -27,6 +27,22 @@ la cuenta por una compra automática.
   tema/plugin lo sobrescribe); si no, ajusta la cantidad a mano en el
   carrito.
 
+## Suscriptores (acceso solo por aprobación)
+
+El bot admite que otras personas reciban el mismo aviso, pero **solo si tú
+las apruebas**: nadie queda suscrito por el simple hecho de escribirle al
+bot.
+
+- Cualquiera le manda `/start` al bot → queda en estado `pending` (guardado
+  en KV) y a ti (el `TELEGRAM_CHAT_ID` admin) te llega un mensaje con botones
+  "✅ Aprobar" / "❌ Rechazar".
+- Solo cuando pulsas "Aprobar" esa persona pasa a `approved` y empieza a
+  recibir el aviso de stock (con el mismo botón de compra) en las próximas
+  notificaciones.
+- `/stop` da de baja a cualquier suscriptor (se lo puede hacer él mismo).
+- Ten en cuenta que el enlace de compra no es personal: si apruebas a varias
+  personas, todas compiten por el mismo stock limitado en el mismo instante.
+
 ## Puesta en marcha
 
 1. **Bot de Telegram**: habla con [@BotFather](https://t.me/BotFather),
@@ -60,17 +76,24 @@ la cuenta por una compra automática.
    sentado, revisa aquí después del primer deploy y, si tras 10-15 min no
    aparece ninguna invocación en los logs, ese es el primer sitio donde
    mirar.
+8. **Registrar el webhook de Telegram** (necesario para que `/start`, `/stop`
+   y los botones de aprobar/rechazar funcionen): visita una vez
+   `GET https://goniogas-monitor.<tu-subdominio>.workers.dev/setup-webhook?key=<CHECK_SECRET>`.
+   Reutiliza `CHECK_SECRET` también como `secret_token` del webhook, así
+   Telegram demuestra que la petición es suya de verdad.
 
 ## Probarlo
 
-- `GET https://goniogas-monitor.<tu-subdominio>.workers.dev/test-notify?key=<CHECK_SECRET>`
-  manda un Telegram de prueba con el botón, sin tocar el estado guardado —
-  sirve para validar el token/chat_id antes de esperar a que haya stock real.
-- `GET https://goniogas-monitor.<tu-subdominio>.workers.dev/check?key=<CHECK_SECRET>`
-  fuerza un chequeo real ahora mismo y devuelve el JSON del resultado
-  (`inStock`, `previousState`, `newState`, `notified`).
-- `GET https://goniogas-monitor.<tu-subdominio>.workers.dev/` muestra el
-  último estado conocido en texto plano.
+- `GET .../test-notify?key=<CHECK_SECRET>` manda un Telegram de prueba con
+  el botón al administrador, sin tocar el estado guardado — sirve para
+  validar el token/chat_id antes de esperar a que haya stock real.
+- `GET .../check?key=<CHECK_SECRET>` fuerza un chequeo real ahora mismo y
+  devuelve el JSON del resultado (`inStock`, `previousState`, `newState`,
+  `notified`).
+- `GET .../` muestra el último estado conocido en texto plano.
+- Desde Telegram: pide a alguien (o hazlo tú desde otra cuenta) que le
+  mande `/start` al bot y comprueba que te llega el mensaje con los botones
+  de aprobar/rechazar.
 
 ## Desarrollo local
 
