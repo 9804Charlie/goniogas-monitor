@@ -1,0 +1,10 @@
+name = "goniogas-monitor"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[kv_namespaces]]
+binding = "STOCK_KV"
+id = "REEMPLAZAR_CON_EL_ID_DEL_NAMESPACE"
