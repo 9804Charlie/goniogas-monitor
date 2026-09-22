@@ -1,11 +1,19 @@
 const PRODUCT_ID = 108;
 const STORE_API_URL = `https://goniogas.com/wp-json/wc/store/v1/products/${PRODUCT_ID}`;
-const BUY_URL = `https://goniogas.com/checkout/?add-to-cart=${PRODUCT_ID}&quantity=2`;
 const STOCK_KV_KEY = "goniogas_108_stock_state";
 const SUB_PREFIX = "sub:";
+const STATE_PREFIX = "state:";
+const DEFAULT_QUANTITY = 2;
+const MIN_QUANTITY = 1;
+const MAX_QUANTITY = 20;
 
-function buyKeyboard() {
-  return { inline_keyboard: [[{ text: "Comprar 2 cilindros ahora", url: BUY_URL }]] };
+function buyUrl(quantity) {
+  return `https://goniogas.com/checkout/?add-to-cart=${PRODUCT_ID}&quantity=${quantity}`;
+}
+
+function buyKeyboard(quantity) {
+  const label = `Comprar ${quantity} cilindro${quantity === 1 ? "" : "s"} ahora`;
+  return { inline_keyboard: [[{ text: label, url: buyUrl(quantity) }]] };
 }
 
 async function telegramApi(env, method, payload) {
@@ -52,13 +60,35 @@ async function putSubscriber(env, chatId, record) {
   await env.STOCK_KV.put(SUB_PREFIX + chatId, JSON.stringify(record));
 }
 
-async function getApprovedSubscriberIds(env) {
+async function getApprovedSubscribers(env) {
   const list = await env.STOCK_KV.list({ prefix: SUB_PREFIX });
   const records = await Promise.all(list.keys.map((k) => env.STOCK_KV.get(k.name)));
-  return records
-    .map((raw) => (raw ? JSON.parse(raw) : null))
-    .filter((rec) => rec && rec.status === "approved")
-    .map((rec) => rec.chatId);
+  return records.map((raw) => (raw ? JSON.parse(raw) : null)).filter((rec) => rec && rec.status === "approved");
+}
+
+async function askQuantity(env, chatId) {
+  await env.STOCK_KV.put(STATE_PREFIX + chatId, "awaiting_quantity");
+  await sendMessage(
+    env,
+    chatId,
+    `¿Cuántos cilindros quieres que añada el enlace de compra cuando avise de stock? ` +
+      `Respóndeme solo con el número (por defecto ${DEFAULT_QUANTITY}).`
+  );
+}
+
+async function handleQuantityAnswer(env, chatId, text) {
+  const n = Number(text.trim());
+  if (!Number.isInteger(n) || n < MIN_QUANTITY || n > MAX_QUANTITY) {
+    await sendMessage(env, chatId, `Respóndeme solo con un número entero entre ${MIN_QUANTITY} y ${MAX_QUANTITY}, por favor.`);
+    return;
+  }
+  const existing = (await getSubscriber(env, chatId)) ?? {
+    chatId,
+    status: isAdmin(env, chatId) ? "approved" : "pending",
+  };
+  await putSubscriber(env, chatId, { ...existing, quantity: n });
+  await env.STOCK_KV.delete(STATE_PREFIX + chatId);
+  await sendMessage(env, chatId, `Guardado. El enlace de compra añadirá ${n} cilindro${n === 1 ? "" : "s"} al carrito.`);
 }
 
 async function checkStock() {
@@ -76,14 +106,26 @@ async function checkStock() {
 
 async function broadcastStockAlert(env, status) {
   const priceEuros = status.priceCents ? (Number(status.priceCents) / 100).toFixed(2) : "?";
-  const text =
+  const baseText =
     `🔥 <b>Hay existencias</b> de "${status.name}" (${priceEuros} €).\n\n` +
-    `Pulsa el botón para añadir 2 cilindros al carrito y pasar a caja. ` +
+    `Pulsa el botón para añadir tus cilindros al carrito y pasar a caja. ` +
     `Recuerda: hay que entregar una bombona vacía al recoger, y solo tienes ` +
     `1 semana de plazo para pasar a recogerlo tras el pedido.`;
-  const approvedIds = await getApprovedSubscriberIds(env);
-  const targets = [...new Set([String(env.TELEGRAM_CHAT_ID), ...approvedIds.map(String)])];
-  await Promise.allSettled(targets.map((chatId) => sendMessage(env, chatId, text, buyKeyboard())));
+
+  const approved = await getApprovedSubscribers(env);
+  const adminRecord = await getSubscriber(env, env.TELEGRAM_CHAT_ID);
+
+  const targets = new Map();
+  targets.set(String(env.TELEGRAM_CHAT_ID), adminRecord?.quantity ?? DEFAULT_QUANTITY);
+  for (const rec of approved) {
+    targets.set(String(rec.chatId), rec.quantity ?? DEFAULT_QUANTITY);
+  }
+
+  await Promise.allSettled(
+    [...targets.entries()].map(([chatId, quantity]) =>
+      sendMessage(env, chatId, baseText, buyKeyboard(quantity))
+    )
+  );
 }
 
 // Solo notifica en la transicion sin_stock -> con_stock, para no repetir avisos
@@ -105,13 +147,24 @@ async function runCheck(env) {
 
 async function handleStart(env, chatId, from) {
   if (isAdmin(env, chatId)) {
-    await sendMessage(env, chatId, "Eres el administrador de este bot, ya recibes los avisos de stock automáticamente.");
+    const record = (await getSubscriber(env, chatId)) ?? { chatId, status: "approved" };
+    await putSubscriber(env, chatId, { ...record, status: "approved" });
+    if (record.quantity) {
+      await sendMessage(
+        env,
+        chatId,
+        `Eres el administrador de este bot. Cantidad configurada actualmente: ${record.quantity}. Usa /cantidad para cambiarla.`
+      );
+    } else {
+      await sendMessage(env, chatId, "Eres el administrador de este bot, ya recibes los avisos de stock automáticamente.");
+      await askQuantity(env, chatId);
+    }
     return;
   }
 
   const existing = await getSubscriber(env, chatId);
   if (existing?.status === "approved") {
-    await sendMessage(env, chatId, "Ya estás suscrito a los avisos de stock de cilindros de gas. Usa /stop para darte de baja.");
+    await sendMessage(env, chatId, "Ya estás suscrito a los avisos de stock de cilindros de gas. Usa /cantidad o /stop.");
     return;
   }
   if (existing?.status === "pending") {
@@ -132,6 +185,7 @@ async function handleStart(env, chatId, from) {
     chatId,
     "Solicitud enviada. En cuanto el administrador la apruebe, te avisaré por aquí cuando haya existencias."
   );
+  await askQuantity(env, chatId);
 
   const adminText =
     `👤 Nueva solicitud de avisos de stock:\n` +
@@ -157,19 +211,36 @@ async function handleStop(env, chatId) {
   await sendMessage(env, chatId, "Listo, ya no recibirás avisos de stock. Puedes volver a pedirlo con /start cuando quieras.");
 }
 
+async function handleQuantityCommand(env, chatId, text) {
+  const parts = text.trim().split(/\s+/);
+  if (parts.length > 1) {
+    await handleQuantityAnswer(env, chatId, parts[1]);
+    return;
+  }
+  await askQuantity(env, chatId);
+}
+
 async function handleMessage(env, message) {
   const chatId = message.chat.id;
   const text = (message.text ?? "").trim();
+
+  const state = await env.STOCK_KV.get(STATE_PREFIX + chatId);
+  if (state === "awaiting_quantity" && !text.startsWith("/")) {
+    await handleQuantityAnswer(env, chatId, text);
+    return;
+  }
 
   if (text.startsWith("/start")) {
     await handleStart(env, chatId, message.from);
   } else if (text.startsWith("/stop")) {
     await handleStop(env, chatId);
+  } else if (text.startsWith("/cantidad")) {
+    await handleQuantityCommand(env, chatId, text);
   } else {
     await sendMessage(
       env,
       chatId,
-      "Comandos disponibles:\n/start — pedir avisos de stock de cilindros de gas\n/stop — darte de baja"
+      "Comandos disponibles:\n/start — pedir avisos de stock de cilindros de gas\n/cantidad — cambiar cuántos cilindros pedir\n/stop — darte de baja"
     );
   }
 }
@@ -264,11 +335,13 @@ export default {
     if (url.pathname === "/test-notify") {
       if (!checkAuth(request, url, env)) return new Response("No autorizado", { status: 401 });
       try {
+        const adminRecord = await getSubscriber(env, env.TELEGRAM_CHAT_ID);
+        const quantity = adminRecord?.quantity ?? DEFAULT_QUANTITY;
         await sendMessage(
           env,
           env.TELEGRAM_CHAT_ID,
-          "✅ Prueba de goniogas-monitor: así se verá el aviso cuando haya existencias.",
-          buyKeyboard()
+          `✅ Prueba de goniogas-monitor: así se verá el aviso cuando haya existencias (cantidad configurada: ${quantity}).`,
+          buyKeyboard(quantity)
         );
         return new Response("Notificacion de prueba enviada.\n");
       } catch (err) {

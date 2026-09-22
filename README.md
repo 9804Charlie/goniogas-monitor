@@ -3,8 +3,8 @@
 Cloudflare Worker que vigila el stock del "Cilindro de gas de 10kg" en
 [goniogas.com](https://goniogas.com/producto/cilindro-de-gas-de-10kg/) (producto
 WooCommerce `id=108`) y avisa por Telegram en cuanto vuelve a haber
-existencias, con un botón que lleva directo al checkout con 2 cilindros ya
-añadidos al carrito.
+existencias, con un botón que lleva directo al checkout con la cantidad que
+cada persona haya pedido ya añadida al carrito.
 
 **No compra nada automáticamente.** El pago, los datos de envío y la
 confirmación final los rellenas tú a mano — el bot solo detecta el cambio de
@@ -20,12 +20,26 @@ la cuenta por una compra automática.
 - El último estado conocido (`in_stock` / `out_of_stock`) se guarda en **KV**.
   Solo se notifica en la transición de "sin stock" a "con stock", para no
   repetir el aviso en cada chequeo mientras dure la existencia.
-- El aviso de Telegram incluye un botón "Comprar 2 cilindros ahora" que
-  enlaza a `https://goniogas.com/checkout/?add-to-cart=108&quantity=2`. Es el
-  parámetro estándar de WooCommerce para añadir al carrito por URL — en
-  cuanto haya stock real, comprueba que efectivamente añade 2 unidades (algún
+- El aviso de Telegram incluye un botón "Comprar N cilindros ahora" que
+  enlaza a `https://goniogas.com/checkout/?add-to-cart=108&quantity=N`, con
+  la `N` que cada persona haya configurado (ver más abajo). Es el parámetro
+  estándar de WooCommerce para añadir al carrito por URL — en cuanto haya
+  stock real, comprueba que efectivamente añade esa cantidad (algún
   tema/plugin lo sobrescribe); si no, ajusta la cantidad a mano en el
   carrito.
+
+## Cantidad por suscriptor
+
+Cada persona (tú incluido) tiene su propia cantidad guardada, en vez de un
+número fijo para todos:
+
+- Al hacer `/start` (o si el administrador nunca la configuró), el bot
+  pregunta "¿Cuántos cilindros quieres...?" y espera un número por texto.
+- `/cantidad` vuelve a preguntar; `/cantidad N` la cambia directamente sin
+  preguntar.
+- Si alguien nunca responde, se usa `2` por defecto. Rango válido: 1-20.
+- El enlace de compra de cada aviso usa la cantidad de ESA persona — no es
+  el mismo número para todos los suscriptores.
 
 ## Suscriptores (acceso solo por aprobación)
 
@@ -40,6 +54,7 @@ bot.
   recibir el aviso de stock (con el mismo botón de compra) en las próximas
   notificaciones.
 - `/stop` da de baja a cualquier suscriptor (se lo puede hacer él mismo).
+- `/cantidad` deja que cada uno cambie cuántos cilindros pide, en cualquier momento.
 - Ten en cuenta que el enlace de compra no es personal: si apruebas a varias
   personas, todas compiten por el mismo stock limitado en el mismo instante.
 
